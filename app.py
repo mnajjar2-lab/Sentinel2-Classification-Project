@@ -66,7 +66,8 @@ if uploaded_file is not None:
                     
                     # تنفيذ التصنيف
                     prediction = model.predict(flat_data)
-                    
+                    # تحويل النتائج إلى أرقام صحيحة صريحة (Integer) للتأكد من توافقها
+                    prediction = prediction.astype(np.uint8)
                     # إعادة التشكيل للصورة الأصلية
                     classified_img = prediction.reshape(h, w)
 
@@ -105,4 +106,5 @@ if uploaded_file is not None:
         st.error(f"❌ حدث خطأ: تأكد أن الملف بصيغة GeoTIFF صحيحة. التفاصيل: {e}")
 
 else:
+
     st.warning("الرجاء رفع ملف الصورة للبدء.")
