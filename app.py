@@ -10,7 +10,7 @@ from sklearn.preprocessing import LabelEncoder
 st.set_page_config(page_title="Land Cover Classifier", layout="wide")
 
 # 2. القائمة الجانبية (Sidebar)
-st.sidebar.title("مشروع تصنيف الغطاء الأرضي 🛰️")
+st.sidebar.title("مشروع تصنيف الغطاء الأرضي محمد النجار 🛰️")
 st.sidebar.markdown("---")
 st.sidebar.write("**إشراف:** المهندس محمد حبوب")
 st.sidebar.info("""
@@ -107,3 +107,4 @@ if uploaded_file is not None:
         st.error(f"حدث خطأ أثناء المعالجة: {str(e)}")
 else:
     st.info("يرجى رفع ملف الصورة للبدء.")
+
