@@ -4,107 +4,80 @@ import numpy as np
 import joblib
 import matplotlib.pyplot as plt
 from io import BytesIO
-from sklearn.preprocessing import LabelEncoder
+import pandas as pd  # أضفنا بانداز لضمان توافق أسماء الأعمدة
 
-# 1. إعدادات الصفحة
 st.set_page_config(page_title="Land Cover Classifier", layout="wide")
 
-# 2. القائمة الجانبية (Sidebar)
-st.sidebar.title("مشروع تصنيف الغطاء الأرضي محمد النجار 🛰️")
-st.sidebar.markdown("---")
-st.sidebar.write("**إشراف:** المهندس محمد حبوب")
-st.sidebar.info("""
-هذا النظام يقوم بتصنيف صور Sentinel-2 إلى 3 فئات أساسية:
-1. **Urban** (عمران)
-2. **Agriculture** (زراعة)
-3. **Water** (مياه)
-""")
+st.sidebar.title("مشروع المهندس محمد حبوب 🛰️")
+st.sidebar.info("تصنيف Sentinel-2: عمران، زراعة، مياه")
 
-st.title("🛰️ نظام التصنيف الآلي للصور الفضائية")
+st.title("🛰️ نظام التصنيف الاحترافي للصور الفضائية")
 
-# 3. رفع الملف
 uploaded_file = st.file_uploader("ارفع صورة GeoTIFF", type=['tif', 'tiff'])
 
 if uploaded_file is not None:
     try:
         with rasterio.open(uploaded_file) as src:
-            meta = src.meta.copy()
             num_bands = src.count
+            meta = src.meta.copy()
             
-            # عرض المعاينة الأصلية
-            st.subheader("🖼️ معاينة الصورة الأصلية")
+            # عرض الصورة الأصلية
+            st.subheader("🖼️ معاينة الصورة")
             if num_bands >= 3:
-                # نأخذ الباندات 1,2,3 للعرض فقط ونقوم بعمل Normalization بسيط لتحسين الصورة
-                preview = src.read([1, 2, 3])
-                preview = np.moveaxis(preview, 0, -1)
-                preview_scaled = (preview - preview.min()) / (preview.max() - preview.min() + 1e-5)
-                st.image(preview_scaled, caption="الصورة الأصلية (RGB)", use_container_width=True)
-            
-            st.write("---")
-            st.subheader("⚙️ إعدادات النموذج")
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                r_idx = st.selectbox("باند الأحمر (Red)", range(1, num_bands + 1), index=0)
-            with col2:
-                g_idx = st.selectbox("باند الأخضر (Green)", range(1, num_bands + 1), index=1)
-            with col3:
-                b_idx = st.selectbox("باند الأزرق (Blue)", range(1, num_bands + 1), index=2)
+                rgb = src.read([1, 2, 3])
+                rgb_norm = np.moveaxis(rgb, 0, -1)
+                # تحسين العرض (Scaling for display only)
+                rgb_norm = (rgb_norm - rgb_norm.min()) / (rgb_norm.max() - rgb_norm.min() + 1e-5)
+                st.image(rgb_norm, use_container_width=True)
 
-            if st.button("🚀 تنفيذ التصنيف"):
-                with st.spinner('جاري تحليل البكسلات...'):
-                    # تحميل الموديل
+            # اختيار الباندات
+            st.write("---")
+            col1, col2, col3 = st.columns(3)
+            with col1: r = st.selectbox("Red Band", range(1, num_bands + 1), index=0)
+            with col2: g = st.selectbox("Green Band", range(1, num_bands + 1), index=1)
+            with col3: b = st.selectbox("Blue Band", range(1, num_bands + 1), index=2)
+
+            if st.button("🚀 تنفيذ التصنيف النهائي"):
+                with st.spinner('جاري التحليل...'):
                     model = joblib.load('model.pkl')
                     
-                    # قراءة الباندات المختارة (القيم الأصلية ضرورية للنموذج)
-                    input_bands = src.read([r_idx, g_idx, b_idx])
-                    c, h, w = input_bands.shape
+                    # قراءة البيانات الخام (Raw Data) كما هي في ملف الـ CSV
+                    input_data = src.read([r, g, b])
+                    c, h, w = input_data.shape
+                    flat_pixels = input_data.reshape(c, -1).T
                     
-                    # تحويل المصفوفة إلى شكل (Pixels, Features)
-                    flat_pixels = input_bands.reshape(c, -1).T
+                    # تحويل البيانات لـ DataFrame بنفس أسماء الأعمدة التي تدرب عليها الموديل
+                    # ملاحظة: تأكد أن B1, B2, B3 هي نفس الأسماء في ملفك الـ CSV
+                    df_pixels = pd.DataFrame(flat_pixels, columns=['B1', 'B2', 'B3'])
                     
-                    # عملية التنبؤ
-                    raw_prediction = model.predict(flat_pixels)
+                    # التنبؤ
+                    prediction = model.predict(df_pixels)
                     
-                    # التعامل مع المخرجات سواء كانت نصية أو رقمية
-                    if np.issubdtype(raw_prediction.dtype, np.number):
-                        final_pred = raw_prediction.astype(np.uint8)
-                    else:
-                        le = LabelEncoder()
-                        final_pred = le.fit_transform(raw_prediction).astype(np.uint8)
+                    # تحويل النتائج لأرقام إذا كانت نصوصاً
+                    if not np.issubdtype(prediction.dtype, np.number):
+                        from sklearn.preprocessing import LabelEncoder
+                        prediction = LabelEncoder().fit_transform(prediction)
                     
-                    # إعادة تشكيل المصفوفة لأبعاد الصورة
-                    classified_map = final_pred.reshape(h, w)
+                    classified_img = prediction.reshape(h, w).astype(np.uint8)
 
-                    # 4. عرض النتائج والـ Legend
+                    # العرض مع Legend واضح
                     st.write("---")
-                    st.subheader("✅ خريطة الغطاء الأرضي الناتجة")
+                    st.subheader("✅ خريطة الغطاء الأرضي")
                     
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    # استخدام 'tab10' أو 'Set1' لإعطاء ألوان متباينة جداً للفئات
-                    im = ax.imshow(classified_map, cmap='viridis') 
-                    plt.colorbar(im, ax=ax, label="الفئات المصنفة")
+                    fig, ax = plt.subplots(figsize=(10, 8))
+                    # استخدام خريطة ألوان متباينة جداً (Set1 أو tab10)
+                    im = ax.imshow(classified_img, cmap='tab10') 
+                    cbar = plt.colorbar(im, ax=ax, ticks=np.unique(classified_img))
+                    cbar.set_label('Classes (0, 1, 2...)')
                     plt.axis('off')
                     st.pyplot(fig)
-                    
-                    st.success("تم التصنيف! الألوان المختلفة تعبر عن تصنيفات الأرض (عمران، زراعة، ماء).")
 
-                    # 5. زر التنزيل
+                    # زر التنزيل
                     meta.update(count=1, dtype='uint8')
                     with rasterio.MemoryFile() as memfile:
                         with memfile.open(**meta) as dataset:
-                            dataset.write(classified_map, 1)
-                        data = memfile.read()
-                    
-                    st.download_button(
-                        label="📥 تحميل الخريطة المصنفة (GeoTIFF)",
-                        data=data,
-                        file_name="Land_Cover_Result.tif",
-                        mime="image/tiff"
-                    )
+                            dataset.write(classified_img, 1)
+                        st.download_button("📥 تحميل النتيجة", memfile.read(), "result.tif", "image/tiff")
 
     except Exception as e:
-        st.error(f"حدث خطأ أثناء المعالجة: {str(e)}")
-else:
-    st.info("يرجى رفع ملف الصورة للبدء.")
-
+        st.error(f"خطأ: {e}")
