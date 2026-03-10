@@ -1,7 +1,7 @@
 streamlit
 rasterio
 scikit-learn
-joblib
 pandas
 matplotlib
+joblib
 numpy
