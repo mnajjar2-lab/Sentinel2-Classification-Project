@@ -2,87 +2,107 @@ import streamlit as st
 import rasterio
 import numpy as np
 import joblib
-import pandas as pd
 import matplotlib.pyplot as plt
+from io import BytesIO
 
-# 1. إعدادات واجهة المهندس محمد حبوب
-st.set_page_config(page_title="Gaza Satellite Classifier", layout="wide")
-st.sidebar.title("مشروع المهندس محمد حبوب 🛰️")
-st.sidebar.info("التصنيف باستخدام Decision Tree + MinMaxScaler")
+# إعدادات الصفحة
+st.set_page_config(page_title="Land Cover Classifier", layout="wide")
 
-st.title("🛰️ نظام تصنيف الغطاء الأرضي لقطاع غزة")
+# الجزء المطلوب: Sidebar يحتوي على شرح مبسط
+st.sidebar.title("حول النموذج 🤖")
+st.sidebar.info("""
+هذا التطبيق يستخدم نموذج **Decision Tree** تم تدريبه لتصنيف الصور الفضائية (Sentinel-2).
+- **الأصناف المدعومة:**
+  1. العمران (Urban)
+  2. الزراعة (Agriculture)
+  3. المياه (Water)
+""")
 
-# 2. تحميل الموديل والسكيلر (تأكد أن الملفات مرفوعة بجانب الكود)
-@st.cache_resource
-def load_assets():
+st.title("🛰️ تطبيق تصنيف الصور الفضائية")
+
+# الجزء المطلوب: Main Area - رفع الصورة
+uploaded_file = st.file_uploader("ارفع صورة القمر الصناعي (GeoTIFF)", type=['tif', 'tiff'])
+
+if uploaded_file is not None:
     try:
-        model = joblib.load('model.pkl')
-        scaler = joblib.load('scaler.pkl')
-        return model, scaler
-    except Exception as e:
-        st.error(f"خطأ في تحميل الملفات: تأكد من وجود model.pkl و scaler.pkl. التفاصيل: {e}")
-        return None, None
-
-model, scaler = load_assets()
-
-uploaded_file = st.file_uploader("ارفع صورة غزة (GeoTIFF)", type=['tif', 'tiff'])
-
-if uploaded_file is not None and model is not None:
-    try:
+        # قراءة الصورة باستخدام rasterio
         with rasterio.open(uploaded_file) as src:
-            # قراءة أول 3 باندات (التي تدرب عليها الموديل)
-            data = src.read([1, 2, 3]).astype(np.float64)
-            c, h, w = data.shape
+            img_data = src.read()
+            meta = src.meta.copy()
+            num_bands = src.count
             
-            # تحويل المصفوفة لشكل بكسلات (Flatten)
-            flat_pixels = data.reshape(c, -1).T
-            
-            # --- الحل السحري: تحويل البيانات لـ DataFrame لضمان تطابق الأسماء ---
-            # الموديل والسكيلر يبحثان عن SAMPLE_1, SAMPLE_2, SAMPLE_3
-            df_pixels = pd.DataFrame(flat_pixels, columns=['SAMPLE_1', 'SAMPLE_2', 'SAMPLE_3'])
-            
-            # 3. المعالجة والتنبؤ
-            if st.button("🚀 تنفيذ التصنيف الدقيق"):
-                with st.spinner('جاري معالجة البيانات وتطبيق السكيلر...'):
-                    # تطبيق السكيلر المحفوظ من جوبيتر
-                    scaled_pixels = scaler.transform(df_pixels)
+            # عرض الصورة الأصلية (RGB افتراضي للعرض فقط)
+            st.subheader("🖼️ الصورة الأصلية")
+            # نأخذ أول 3 باندات للعرض السريع
+            display_img = src.read([1, 2, 3])
+            display_img = np.moveaxis(display_img, 0, -1)
+            # عمل Normalize بسيط للعرض
+            display_img = (display_img - display_img.min()) / (display_img.max() - display_img.min())
+            st.image(display_img, caption="الصورة المرفوعة", use_container_width=True)
+
+            # الجزء المطلوب: 3 قوائم منسدلة لاختيار الباندات
+            st.write("---")
+            st.subheader("⚙️ إعدادات التصنيف")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                r_band = st.selectbox("باند الأحمر (Red)", range(1, num_bands + 1), index=0)
+            with col2:
+                g_band = st.selectbox("باند الأخضر (Green)", range(1, num_bands + 1), index=1)
+            with col3:
+                b_band = st.selectbox("باند الأزرق (Blue)", range(1, num_bands + 1), index=2)
+
+            # الجزء المطلوب: زر بدء التصنيف
+            if st.button("🚀 ابدأ التصنيف الآن"):
+                with st.spinner('جاري معالجة الصورة...'):
+                    # تحميل الموديل المحفوظ
+                    model = joblib.load('model.pkl')
                     
-                    # إعادة تحويل البيانات لـ DataFrame بعد السكيلر للحفاظ على الأسماء للموديل
-                    df_scaled = pd.DataFrame(scaled_pixels, columns=['SAMPLE_1', 'SAMPLE_2', 'SAMPLE_3'])
+                    # استخراج الباندات المختارة
+                    input_data = src.read([r_band, g_band, b_band])
+                    c, h, w = input_data.shape
                     
-                    # التنبؤ
-                    prediction = model.predict(df_scaled)
+                    # تحويل البيانات لشكل جدول (pixels, 3)
+                    flat_data = input_data.reshape(c, -1).T
                     
-                    # تحويل المخرجات النصية (urban, water...) لأرقام للرسم
-                    unique_labels = np.unique(prediction)
-                    label_to_int = {label: i for i, label in enumerate(unique_labels)}
-                    numeric_pred = np.array([label_to_int[p] for p in prediction])
+                    # تنفيذ التصنيف
+                    prediction = model.predict(flat_data)
                     
-                    classified_img = numeric_pred.reshape(h, w)
-                    
-                    # 4. العرض والنتائج
+                    # إعادة التشكيل للصورة الأصلية
+                    classified_img = prediction.reshape(h, w)
+
+                    # الجزء المطلوب: عرض الصورة المصنفة مع Legend
                     st.write("---")
-                    st.subheader("✅ خريطة التصنيف النهائية")
+                    st.subheader("✅ نتيجة التصنيف")
                     
-                    fig, ax = plt.subplots(figsize=(10, 8))
-                    # استخدام cmap='terrain' يعطي ألواناً منطقية (أخضر للزرع، أزرق للماء)
-                    im = ax.imshow(classified_img, cmap='terrain')
+                    fig, ax = plt.subplots(figsize=(10, 7))
+                    # استخدام ألوان واضحة: Urban (رمادي)، Agri (أخضر)، Water (أزرق)
+                    # ملاحظة: تأكد أن القيم 1, 2, 3 تطابق كودك
+                    im = ax.imshow(classified_img, cmap='terrain') 
+                    plt.title("Classified Image")
                     plt.axis('off')
-                    st.pyplot(fig)
                     
-                    # وسيلة الإيضاح (Legend)
-                    st.write("**دليل الأصناف المكتشفة:**")
-                    cols = st.columns(len(unique_labels))
-                    for label, idx in label_to_int.items():
-                        cols[idx].info(f"صنف {idx}: {label}")
-                        
-                    # زر تنزيل النتيجة (GeoTIFF)
-                    meta = src.meta.copy()
+                    # إضافة Legend
+                    st.pyplot(fig)
+                    st.info("الألوان تعبر عن الأصناف (مثال: أزرق = مياه، أخضر = زراعة، بني/رمادي = عمران)")
+
+                    # الجزء المطلوب: تنزيل النتيجة بصيغة GeoTIFF
                     meta.update(count=1, dtype='uint8')
+                    out_bytes = BytesIO()
+                    # حفظ الملف في الذاكرة لتنزيله
                     with rasterio.MemoryFile() as memfile:
                         with memfile.open(**meta) as dataset:
-                            dataset.write(classified_img.astype(np.uint8), 1)
-                        st.download_button("📥 تحميل الخريطة المصنفة", memfile.read(), "Gaza_Classified.tif")
+                            dataset.write(classified_img.astype('uint8'), 1)
+                        data = memfile.read()
+                    
+                    st.download_button(
+                        label="📥 تنزيل الصورة المصنفة كـ GeoTIFF",
+                        data=data,
+                        file_name="classified_result.tif",
+                        mime="image/tiff"
+                    )
 
     except Exception as e:
-        st.error(f"حدث خطأ أثناء المعالجة: {e}")
+        st.error(f"❌ حدث خطأ: تأكد أن الملف بصيغة GeoTIFF صحيحة. التفاصيل: {e}")
+
+else:
+    st.warning("الرجاء رفع ملف الصورة للبدء.")
