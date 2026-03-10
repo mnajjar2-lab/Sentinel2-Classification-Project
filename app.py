@@ -9,113 +9,101 @@ from sklearn.preprocessing import LabelEncoder
 # 1. إعدادات الصفحة
 st.set_page_config(page_title="Land Cover Classifier", layout="wide")
 
-# 2. الجزء المطلوب: Sidebar يحتوي على شرح مبسط للمشروع
-st.sidebar.title("مشروع محمد - تصنيف الغطاء الأرضي 🛰️")
+# 2. القائمة الجانبية (Sidebar)
+st.sidebar.title("مشروع تصنيف الغطاء الأرضي 🛰️")
+st.sidebar.markdown("---")
+st.sidebar.write("**إشراف:** المهندس محمد حبوب")
 st.sidebar.info("""
-هذا التطبيق يستخدم نموذج **Decision Tree** تم تدريبه لتصنيف الصور الفضائية (Sentinel-2).
-- **الأصناف المدعومة:**
-  1. العمران (Urban)
-  2. الزراعة (Agriculture)
-  3. المياه (Water)
+هذا النظام يقوم بتصنيف صور Sentinel-2 إلى 3 فئات أساسية:
+1. **Urban** (عمران)
+2. **Agriculture** (زراعة)
+3. **Water** (مياه)
 """)
 
-st.title("🛰️ تطبيق تصنيف الصور الفضائية الذكي")
+st.title("🛰️ نظام التصنيف الآلي للصور الفضائية")
 
-# 3. الجزء المطلوب: Main Area - رفع الصورة
-uploaded_file = st.file_uploader("ارفع صورة القمر الصناعي بصيغة (GeoTIFF)", type=['tif', 'tiff'])
+# 3. رفع الملف
+uploaded_file = st.file_uploader("ارفع صورة GeoTIFF", type=['tif', 'tiff'])
 
 if uploaded_file is not None:
     try:
-        # قراءة الصورة باستخدام rasterio
         with rasterio.open(uploaded_file) as src:
             meta = src.meta.copy()
             num_bands = src.count
             
-            # عرض الصورة الأصلية (RGB)
-            st.subheader("🖼️ الصورة الأصلية")
-            # قراءة أول 3 باندات للعرض فقط
+            # عرض المعاينة الأصلية
+            st.subheader("🖼️ معاينة الصورة الأصلية")
             if num_bands >= 3:
-                display_img = src.read([1, 2, 3])
-                display_img = np.moveaxis(display_img, 0, -1)
-                # عمل Normalize لضمان ظهور الألوان بشكل صحيح
-                display_img = (display_img - display_img.min()) / (display_img.max() - display_img.min())
-                st.image(display_img, caption="معاينة الصورة المرفوعة", use_container_width=True)
-            else:
-                st.warning("الصورة تحتوي على أقل من 3 باندات للعرض الملون.")
-
-            # 4. الجزء المطلوب: اختيار الباندات من قوائم منسدلة
+                # نأخذ الباندات 1,2,3 للعرض فقط ونقوم بعمل Normalization بسيط لتحسين الصورة
+                preview = src.read([1, 2, 3])
+                preview = np.moveaxis(preview, 0, -1)
+                preview_scaled = (preview - preview.min()) / (preview.max() - preview.min() + 1e-5)
+                st.image(preview_scaled, caption="الصورة الأصلية (RGB)", use_container_width=True)
+            
             st.write("---")
-            st.subheader("⚙️ إعدادات التصنيف")
-            st.write("اختر الباندات التي تم استخدامها أثناء تدريب النموذج (الترتيب مهم):")
+            st.subheader("⚙️ إعدادات النموذج")
+            
             col1, col2, col3 = st.columns(3)
             with col1:
-                r_band = st.selectbox("باند الأحمر (Red)", range(1, num_bands + 1), index=0)
+                r_idx = st.selectbox("باند الأحمر (Red)", range(1, num_bands + 1), index=0)
             with col2:
-                g_band = st.selectbox("باند الأخضر (Green)", range(1, num_bands + 1), index=1)
+                g_idx = st.selectbox("باند الأخضر (Green)", range(1, num_bands + 1), index=1)
             with col3:
-                b_band = st.selectbox("باند الأزرق (Blue)", range(1, num_bands + 1), index=2)
+                b_idx = st.selectbox("باند الأزرق (Blue)", range(1, num_bands + 1), index=2)
 
-            # 5. الجزء المطلوب: تنفيذ التصنيف عند الضغط على الزر
-            if st.button("🚀 ابدأ عملية التصنيف"):
-                with st.spinner('جاري قراءة البكسلات وتطبيق النموذج...'):
-                    # تحميل الموديل المحفوظ
+            if st.button("🚀 تنفيذ التصنيف"):
+                with st.spinner('جاري تحليل البكسلات...'):
+                    # تحميل الموديل
                     model = joblib.load('model.pkl')
                     
-                    # استخراج الباندات المختارة وتحضيرها
-                    input_data = src.read([r_band, g_band, b_band])
-                    c, h, w = input_data.shape
+                    # قراءة الباندات المختارة (القيم الأصلية ضرورية للنموذج)
+                    input_bands = src.read([r_idx, g_idx, b_idx])
+                    c, h, w = input_bands.shape
                     
-                    # تحويل البيانات لشكل جدول (Pixels x Features)
-                    flat_data = input_data.reshape(c, -1).T
+                    # تحويل المصفوفة إلى شكل (Pixels, Features)
+                    flat_pixels = input_bands.reshape(c, -1).T
                     
-                    # التنبؤ (Prediction)
-                    prediction = model.predict(flat_data)
+                    # عملية التنبؤ
+                    raw_prediction = model.predict(flat_pixels)
                     
-                    # --- معالجة احترافية لأنواع البيانات (تجنب خطأ dtype object) ---
-                    if np.issubdtype(prediction.dtype, np.number):
-                        # إذا كانت النتائج أرقاماً (1, 2, 3)
-                        final_prediction = prediction.astype(np.uint8)
+                    # التعامل مع المخرجات سواء كانت نصية أو رقمية
+                    if np.issubdtype(raw_prediction.dtype, np.number):
+                        final_pred = raw_prediction.astype(np.uint8)
                     else:
-                        # إذا كانت النتائج نصوصاً ('urban', 'water')
                         le = LabelEncoder()
-                        final_prediction = le.fit_transform(prediction).astype(np.uint8)
+                        final_pred = le.fit_transform(raw_prediction).astype(np.uint8)
                     
-                    # إعادة التشكيل لأبعاد الصورة الأصلية
-                    classified_img = final_prediction.reshape(h, w)
+                    # إعادة تشكيل المصفوفة لأبعاد الصورة
+                    classified_map = final_pred.reshape(h, w)
 
-                    # 6. الجزء المطلوب: عرض النتيجة مع Legend
+                    # 4. عرض النتائج والـ Legend
                     st.write("---")
-                    st.subheader("✅ نتيجة التصنيف النهائية")
+                    st.subheader("✅ خريطة الغطاء الأرضي الناتجة")
                     
-                    fig, ax = plt.subplots(figsize=(10, 7))
-                    # استخدام خريطة ألوان terrain المناسبة لغطاء الأرض
-                    im = ax.imshow(classified_img, cmap='terrain') 
-                    plt.colorbar(im, ax=ax, ticks=np.unique(classified_img), label="فئات الغطاء الأرضي")
-                    plt.title("Classification Result")
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    # استخدام 'tab10' أو 'Set1' لإعطاء ألوان متباينة جداً للفئات
+                    im = ax.imshow(classified_map, cmap='viridis') 
+                    plt.colorbar(im, ax=ax, label="الفئات المصنفة")
                     plt.axis('off')
-                    
                     st.pyplot(fig)
-                    st.success("تم التصنيف بنجاح! يمكنك الآن رؤية توزيع (المياه، الزراعة، والعمران).")
-
-                    # 7. الجزء المطلوب: تنزيل النتيجة بصيغة GeoTIFF
-                    meta.update(count=1, dtype='uint8')
                     
-                    # حفظ الملف في الذاكرة (MemoryFile) لتوفير زر تحميل سريع
+                    st.success("تم التصنيف! الألوان المختلفة تعبر عن تصنيفات الأرض (عمران، زراعة، ماء).")
+
+                    # 5. زر التنزيل
+                    meta.update(count=1, dtype='uint8')
                     with rasterio.MemoryFile() as memfile:
                         with memfile.open(**meta) as dataset:
-                            dataset.write(classified_img, 1)
+                            dataset.write(classified_map, 1)
                         data = memfile.read()
                     
                     st.download_button(
-                        label="📥 تنزيل الخريطة المصنفة (GeoTIFF)",
+                        label="📥 تحميل الخريطة المصنفة (GeoTIFF)",
                         data=data,
-                        file_name="classified_land_cover.tif",
+                        file_name="Land_Cover_Result.tif",
                         mime="image/tiff"
                     )
 
     except Exception as e:
-        st.error(f"❌ خطأ تقني: {e}")
-        st.info("تأكد من أن الموديل (model.pkl) متوافق مع عدد الباندات المختار.")
-
+        st.error(f"حدث خطأ أثناء المعالجة: {str(e)}")
 else:
-    st.warning("ننتظر منك رفع ملف الصورة (GeoTIFF) للبدء في التحليل.")
+    st.info("يرجى رفع ملف الصورة للبدء.")
